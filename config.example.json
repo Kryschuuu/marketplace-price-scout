@@ -1,0 +1,26 @@
+{
+  "flask": {
+    "host": "0.0.0.0",
+    "port": 5000,
+    "debug": false
+  },
+  "scraper": {
+    "timeout": 15,
+    "rate_limit": 1,
+    "max_retries": 2,
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  },
+  "platforms": {
+    "kleinanzeigen_enabled": true,
+    "ebay_enabled": true,
+    "hardwareschotte_enabled": true
+  },
+  "pricing": {
+    "trim_percent": 0.15,
+    "min_price_threshold": 50
+  },
+  "api": {
+    "rate_limit_per_minute": 10,
+    "max_results": 100
+  }
+}
