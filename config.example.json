@@ -1,6 +1,15 @@
 {
-  "flask": {"host": "0.0.0.0", "port": 5000, "debug": false},
-  "scraper": {"timeout": 15, "rate_limit": 1, "max_retries": 2, "user_agent": "Mozilla/5.0"},
+  "flask": {
+    "host": "0.0.0.0",
+    "port": 5000,
+    "debug": false
+  },
+  "scraper": {
+    "timeout": 15,
+    "rate_limit": 0.5,
+    "max_retries": 2,
+    "user_agent": "Mozilla/5.0"
+  },
   "platforms": {
     "kleinanzeigen_enabled": true,
     "ebay_enabled": true,
@@ -9,6 +18,12 @@
     "mydealz_enabled": true,
     "amazon_enabled": true
   },
-  "pricing": {"trim_percent": 0.15, "min_price_threshold": 50},
-  "api": {"rate_limit_per_minute": 10, "max_results": 100}
+  "pricing": {
+    "trim_percent": 0.15,
+    "min_price_threshold": 50
+  },
+  "api": {
+    "rate_limit_per_minute": 10,
+    "max_results": 100
+  }
 }

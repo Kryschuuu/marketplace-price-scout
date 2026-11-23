@@ -29,8 +29,8 @@ wheels/
 *.spec
 
 # Virtual environments
-venv/
 .venv/
+venv/
 env/
 ENV/
 env.bak/
@@ -55,3 +55,6 @@ logs/
 # Cache
 .cache/
 *.cache
+
+# Marketplace Price Scout specific
+marketplace_price_scout/__pycache__/

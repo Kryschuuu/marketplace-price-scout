@@ -8,7 +8,7 @@ A powerful, production-ready price comparison scraper for German marketplaces (K
 
 ## 🎯 Features
 
-✅ **Multi-Platform Scraping**
+✅ **Multi-Platform Scraping** (Selectable per search)
 - Kleinanzeigen (classifieds)
 - eBay Germany
 - Vinted Germany
@@ -22,9 +22,10 @@ A powerful, production-ready price comparison scraper for German marketplaces (K
 - Best deal highlighting
 
 ✅ **Production-Ready**
-- Rate limiting (10 requests/minute)
+- Rate limiting (configurable)
 - Input validation & sanitization
 - Comprehensive error handling & logging
+- **Log Terminal Tab** (Live error/info tracking)
 - CORS enabled for cross-origin requests
 - Timeout protection (60 seconds)
 - Parallel scraping for speed
@@ -33,12 +34,13 @@ A powerful, production-ready price comparison scraper for German marketplaces (K
 - Real-time search with live results
 - Price filtering (min/max)
 - Blacklist keywords (exclude search results)
+- **Platform Selection** (Toggle marketplaces per search)
 - Responsive design (mobile & desktop)
 - Dark theme UI
 
 ## Version
 
-Current release: **1.1.0** (see [CHANGELOG](CHANGELOG.md)).
+Current release: **1.2.0** (see [CHANGELOG](CHANGELOG.md))
 
 ## 📋 Requirements
 
@@ -57,13 +59,8 @@ cd marketplace-price-scout
 ### 2. Create Virtual Environment
 
 ```bash
-# On Windows
-python -m venv venv
-venv\Scripts\activate
-
-# On macOS/Linux
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
 ### 3. Install Dependencies
@@ -83,6 +80,10 @@ Edit `.env` to customize:
 FLASK_HOST=0.0.0.0
 FLASK_PORT=5000
 FLASK_DEBUG=False
+SCRAPER_TIMEOUT=15
+SCRAPER_MAX_RETRIES=2
+API_RATE_LIMIT_PER_MINUTE=10
+API_MAX_RESULTS=100
 ```
 
 ## 💻 Usage
@@ -100,58 +101,14 @@ The web dashboard will be available at: **http://localhost:5000**
 1. Enter a product name (e.g., "iPhone 15 Pro")
 2. Set min/max price range (optional)
 3. Add blacklist keywords to exclude listings (e.g., "hülle, defekt")
-4. Click "Start Live Search"
-5. Results appear in real-time with price comparisons
-
-## 🔧 API Reference
-
-### POST /api/scrape
-
-Scrape all marketplaces for a product.
-
-**Request:**
-```json
-{
-  "query": "iPhone 15 Pro",
-  "minPrice": 250,
-  "maxPrice": 1200,
-  "blacklist": ["hülle", "defekt", "ovp"]
-}
-```
-
-**Response:**
-```json
-{
-  "items": [
-    {
-      "platform": "Kleinanzeigen",
-      "title": "iPhone 15 Pro 128GB Schwarz",
-      "price": 899.50,
-      "url": "https://www.kleinanzeigen.de/s-...",
-      "diff": -5.2
-    }
-  ],
-  "avgPrice": 950.00,
-  "indexPrice": 899.99,
-  "count": 42
-}
-```
-
-### GET /health
-
-Health check endpoint for monitoring.
-
-**Response:**
-```json
-{
-  "status": "healthy",
-  "timestamp": "2024-01-15T10:30:45.123456"
-}
-```
+4. **Select Platforms** (Kleinanzeigen, eBay, Vinted, mydealz, Amazon, Hardwareschotte)
+5. Click "Start Live Search"
+6. Results appear in real-time with price comparisons
+7. **Log Terminal Tab**: View live scraping logs and error messages
 
 ## ⚙️ Configuration
 
-Edit `config.example.json` and save as `config.json` to customize:
+Edit `config.json` or use environment variables:
 
 ```json
 {
@@ -162,8 +119,21 @@ Edit `config.example.json` and save as `config.json` to customize:
   },
   "scraper": {
     "timeout": 15,
-    "rate_limit": 1,
-    "max_retries": 2
+    "rate_limit": 0.5,
+    "max_retries": 2,
+    "user_agent": "Mozilla/5.0"
+  },
+  "platforms": {
+    "kleinanzeigen_enabled": true,
+    "ebay_enabled": true,
+    "hardwareschotte_enabled": true,
+    "vinted_enabled": true,
+    "mydealz_enabled": true,
+    "amazon_enabled": true
+  },
+  "pricing": {
+    "trim_percent": 0.15,
+    "min_price_threshold": 50
   },
   "api": {
     "rate_limit_per_minute": 10,
@@ -172,14 +142,38 @@ Edit `config.example.json` and save as `config.json` to customize:
 }
 ```
 
+## 🛠️ Project Structure
+
+```
+marketplace-price-scout/
+├── marketplace_price_scout/          # Package root
+│   ├── __init__.py                  # Version & package info
+│   ├── app.py                       # Flask application & routes
+│   ├── config.py                    # Configuration loader
+│   ├── logging_terminal.py          # Log terminal buffer & handler
+│   ├── scrapers/                    # Scraper logic
+│   │   ├── adapters.py              # Platform adapters
+│   │   └── validation.py            # Input validation
+│   ├── templates/                   # HTML templates
+│   │   └── index.html               # Dashboard with Log Terminal & Platform selection
+│   └── static/                      # Static assets (optional)
+├── app.py                           # Root entry point
+├── requirements.txt                 # Python dependencies
+├── config.example.json              # Configuration template
+├── .env.example                     # Environment variables template
+├── .gitignore                       # Git ignore rules
+├── README.md                        # This file
+├── CHANGELOG.md                     # Release history
+├── LICENSE                          # MIT License
+└── tests/                           # Unit tests
+    └── test_app.py                  # Test suite
+```
+
 ## 🐛 Known Issues & Limitations
 
 ⚠️ **Website Changes**: Marketplace HTML structures change frequently. Scrapers may break temporarily.
-
-⚠️ **Rate Limiting**: Some sites block scrapers. The tool uses cloudflare-bypass, but may still be blocked.
-
+⚠️ **Rate Limiting**: Some sites block scrapers. The tool uses cloudscraper/curl_cffi, but may still be blocked.
 ⚠️ **Cloudflare**: Hardwareschotte may require special handling. Falls back to standard requests if `cloudscraper` fails.
-
 ⚠️ **Legal**: Scraping may violate Terms of Service on some platforms. Use responsibly.
 
 ## 🔒 Security
@@ -191,93 +185,11 @@ Edit `config.example.json` and save as `config.json` to customize:
 - ✅ No sensitive data stored
 - ✅ No authentication bypass (just data scraping)
 
-## 🛠️ Development
-
-### Run with Debug Mode
-
-```bash
-FLASK_DEBUG=True python app.py
-```
-
-### View Logs
-
-Logs are printed to console with timestamps:
-```
-2024-01-15 10:30:45,123 - INFO - Scraping query: 'iPhone 15 Pro'
-2024-01-15 10:30:48,456 - INFO - Found 42 results
-```
-
-### Project Structure
-
-```
-marketplace-price-scout/
-├── app.py                 # Main Flask application
-├── requirements.txt       # Python dependencies
-├── config.example.json    # Configuration template
-├── .env.example          # Environment variables template
-├── .gitignore            # Git ignore rules
-├── README.md             # This file
-└── LICENSE               # MIT License
-```
-
-## 📊 Performance
-
-- **Parallel Scraping**: Uses ThreadPoolExecutor for 3x faster results
-- **Rate Limiting**: 1 second delay between platform requests
-- **Timeout**: 60 seconds max per request
-- **Max Results**: 100 items per platform
-
-## 🤝 Contributing
-
-Contributions welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## 📝 License
-
-This project is licensed under the **MIT License** - see [LICENSE](LICENSE) file for details.
-
-## ⚖️ Disclaimer
-
-**Legal Notice**: This tool is for educational and personal use only. Scraping marketplaces may violate their Terms of Service. The author assumes no responsibility for misuse. Always:
-
-- Check marketplace Terms of Service
-- Respect rate limits and robots.txt
-- Don't overwhelm servers with requests
-- Use responsibly and ethically
-
-## 🆘 Troubleshooting
-
-### "No results found"
-- Marketplace might be blocked or down
-- Search term might be too specific
-- Try different keywords
-
-### "Request timeout"
-- Network connection slow
-- Website slow to respond
-- Try again in a few moments
-
-### "Cloudflare error"
-- Website has strong bot protection
-- cloudscraper may need updating: `pip install --upgrade cloudscraper`
-- May need manual intervention
-
-### Application won't start
-- Port 5000 already in use: `FLASK_PORT=5001 python app.py`
-- Dependencies not installed: `pip install -r requirements.txt`
-- Python version too old: Requires Python 3.8+
-
 ## 📈 Future Roadmap
 
 - [ ] Database storage for price history
 - [ ] Price trend charts
 - [ ] Email alerts for price drops
-- [ ] Additional marketplace adapters
 - [ ] Docker support
 - [ ] REST API authentication
 - [ ] Admin dashboard
@@ -289,3 +201,4 @@ Open an [Issue](https://github.com/Kryschuuu/marketplace-price-scout/issues) or 
 ---
 
 **Made with ❤️ by [Kryschuuu](https://github.com/Kryschuuu)**
+---
