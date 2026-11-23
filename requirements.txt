@@ -6,3 +6,7 @@ requests==2.31.0
 python-dotenv==1.0.0
 Flask-Limiter==3.5.0
 Flask-CORS==4.0.0
+# Optional but recommended: browser TLS impersonation, significantly reduces
+# Vinted 406 / Amazon 503 blocks. The code falls back to cloudscraper if the
+# package is missing. Install with: pip install curl_cffi==0.17.0
+# curl_cffi==0.17.0

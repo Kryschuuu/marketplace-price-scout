@@ -22,13 +22,15 @@ A powerful, production-ready price comparison scraper for German marketplaces (K
 - Best deal highlighting
 
 ✅ **Production-Ready**
-- Rate limiting (configurable)
-- Input validation & sanitization
-- Comprehensive error handling & logging
-- **Log Terminal Tab** (Live error/info tracking)
-- CORS enabled for cross-origin requests
-- Timeout protection (60 seconds)
-- Parallel scraping for speed
+- Rate limiting (separate budgets for scraping vs. log polling)
+- Input validation & sanitization (strict types → HTTP 400, never 500)
+- Correct HTTP semantics: `200` only when at least one marketplace answered,
+  `503`/`502` when every selected marketplace was blocked/failed
+- Retries with exponential backoff + `Retry-After` support, per-request timeouts
+  and an overall scrape deadline
+- **Log Terminal Tab** (live, incremental polling — no more 429 storms)
+- CORS configurable (`CORS_ORIGINS`)
+- Parallel scraping with bounded worker pool
 
 ✅ **User-Friendly Dashboard**
 - Real-time search with live results
@@ -40,7 +42,7 @@ A powerful, production-ready price comparison scraper for German marketplaces (K
 
 ## Version
 
-Current release: **1.2.0** (see [CHANGELOG](CHANGELOG.md))
+Current release: **1.3.0** (see [CHANGELOG](CHANGELOG.md))
 
 ## 📋 Requirements
 
@@ -92,6 +94,8 @@ API_MAX_RESULTS=100
 
 ```bash
 python app.py
+# or, for production:
+gunicorn -w 2 -b 0.0.0.0:5000 "marketplace_price_scout.app:app"
 ```
 
 The web dashboard will be available at: **http://localhost:5000**
@@ -108,39 +112,75 @@ The web dashboard will be available at: **http://localhost:5000**
 
 ## ⚙️ Configuration
 
-Edit `config.json` or use environment variables:
+Edit `config.json` (copy `config.example.json`) or use environment variables
+(see `.env.example`). Environment variables win over `config.json`.
+
+| Key (JSON / env) | Default | Meaning |
+|---|---|---|
+| `scraper.timeout` / `SCRAPER_TIMEOUT` | `15` | per-request timeout (s) |
+| `scraper.deadline` / `SCRAPER_DEADLINE` | `25` | total budget for one search (s) |
+| `scraper.max_retries` / `SCRAPER_MAX_RETRIES` | `2` | retries per platform |
+| `scraper.retry_backoff` / `SCRAPER_RETRY_BACKOFF` | `1.5` | exponential backoff base |
+| `scraper.rate_limit` / `SCRAPER_RATE_LIMIT` | `0.0` | extra delay between platforms |
+| `scraper.user_agent` / `SCRAPER_USER_AGENT` | Chrome UA | outbound User-Agent |
+| `scraper.warmup` / `SCRAPER_WARMUP` | `true` | visit homepage first so cookies exist |
+| `api.rate_limit_per_minute` / `API_RATE_LIMIT_PER_MINUTE` | `10` | limit for `POST /api/scrape` |
+| `api.log_rate_limit_per_minute` / `API_LOG_RATE_LIMIT_PER_MINUTE` | `120` | limit for `GET /api/logs` |
+| `api.cors_origins` / `CORS_ORIGINS` | `[]` (any) | allowed browser origins |
+| `platforms.*_enabled` | `true` | globally enable/disable a platform |
+
+All numeric values are clamped to a safe range, and a short/bogus User-Agent
+(e.g. `Mozilla/5.0`) is replaced — that alone is a common cause of 406/503.
+
+## 🔌 API
+
+### `POST /api/scrape`
 
 ```json
 {
-  "flask": {
-    "host": "0.0.0.0",
-    "port": 5000,
-    "debug": false
-  },
-  "scraper": {
-    "timeout": 15,
-    "rate_limit": 0.5,
-    "max_retries": 2,
-    "user_agent": "Mozilla/5.0"
-  },
-  "platforms": {
-    "kleinanzeigen_enabled": true,
-    "ebay_enabled": true,
-    "hardwareschotte_enabled": true,
-    "vinted_enabled": true,
-    "mydealz_enabled": true,
-    "amazon_enabled": true
-  },
-  "pricing": {
-    "trim_percent": 0.15,
-    "min_price_threshold": 50
-  },
-  "api": {
-    "rate_limit_per_minute": 10,
-    "max_results": 100
-  }
+  "query": "iPhone 15 Pro",
+  "minPrice": 250,
+  "maxPrice": 1200,
+  "blacklist": ["hülle", "defekt"],
+  "platforms": {"kleinanzeigen": true, "ebay": false, "vinted": false,
+                "mydealz": false, "amazon": false, "hardwareschotte": false}
 }
 ```
+
+| Status | Meaning |
+|---|---|
+| `200` | at least one selected marketplace answered (result list may be empty) |
+| `400` | invalid JSON/input, or no searchable platform selected |
+| `429` | scrape rate limit hit (`Retry-After` header) |
+| `502` | every selected marketplace failed (non-blocking error) |
+| `503` | every selected marketplace blocked us (`401/403/406/429/503`) or timed out |
+
+The body always contains `items`, `avgPrice`, `indexPrice`, `count`,
+`platforms` (per-platform status) and `warnings` (per-platform failure reason).
+A platform that is disabled in the request or in the config is reported as
+`"skipped": true` and is **never** contacted.
+
+### `GET /api/logs`
+
+Incremental polling: pass `since=<latestSeq>` from the previous response to get
+only new lines. Returns `logs` (newest first), `latestSeq`, `oldestSeq`,
+`truncated` and `total`. Responses carry `Cache-Control: no-store`; the
+dashboard polls once per second and backs off on `429` using `Retry-After`.
+
+### `GET /health`, `POST /api/logs/clear`
+
+Health probe (version + platform switches) and log buffer reset.
+
+## 🧪 Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+The suite never touches the network (HTTP clients are stubbed) and covers the
+log-derived regressions: ignored platform selection, 406/503 handling, status
+codes, retry/backoff, scrape deadline and 429 behaviour of the log endpoint.
 
 ## 🛠️ Project Structure
 
@@ -160,6 +200,7 @@ marketplace-price-scout/
 ├── app.py                           # Root entry point
 ├── requirements.txt                 # Python dependencies
 ├── config.example.json              # Configuration template
+├── requirements-dev.txt             # Test/lint dependencies
 ├── .env.example                     # Environment variables template
 ├── .gitignore                       # Git ignore rules
 ├── README.md                        # This file
@@ -174,13 +215,16 @@ marketplace-price-scout/
 ⚠️ **Website Changes**: Marketplace HTML structures change frequently. Scrapers may break temporarily.
 ⚠️ **Rate Limiting**: Some sites block scrapers. The tool uses cloudscraper/curl_cffi, but may still be blocked.
 ⚠️ **Cloudflare**: Hardwareschotte may require special handling. Falls back to standard requests if `cloudscraper` fails.
+⚠️ **Bot walls**: Vinted (`406`) and Amazon (`503`) routinely block datacenter IPs. The code retries with backoff, warms up cookies and (if `curl_cffi` is installed) impersonates a Chrome TLS fingerprint, but cannot guarantee success. When *all* platforms are blocked the API now answers `503` instead of pretending there were no offers.
 ⚠️ **Legal**: Scraping may violate Terms of Service on some platforms. Use responsibly.
 
 ## 🔒 Security
 
 - ✅ Input validation & sanitization
 - ✅ Rate limiting to prevent abuse
-- ✅ Timeout protection (60s max)
+- ✅ Per-request timeout + overall scrape deadline
+- ✅ Strict input typing (no 500s from malformed JSON)
+- ✅ Off-site result links rejected (no redirect/SSRF-style URLs)
 - ✅ CORS headers for safety
 - ✅ No sensitive data stored
 - ✅ No authentication bypass (just data scraping)

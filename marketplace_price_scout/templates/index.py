@@ -18,7 +18,7 @@ HTML_TEMPLATE = """
             <div class="bg-emerald-500/20 text-emerald-400 p-2 rounded-lg border border-emerald-500/30"><i class="fa-solid fa-magnifying-glass-dollar fa-lg"></i></div>
             <span class="text-xl font-bold text-white tracking-tight">Marketplace <span class="text-emerald-500">Price Scout</span></span>
         </div>
-        <span class="text-xs text-slate-500" id="versionBadge">v1.2.0</span>
+        <span class="text-xs text-slate-500" id="versionBadge">v{{ version }}</span>
     </nav>
 
     <div class="flex flex-1 overflow-hidden flex-col md:flex-row">
@@ -102,6 +102,8 @@ HTML_TEMPLATE = """
                 <p id="errorText" class="break-words"></p>
             </div>
 
+            <div id="warnBanner" class="hidden mb-4 p-3 bg-amber-500/10 border border-amber-500/40 rounded-lg text-amber-300 text-xs space-y-1"></div>
+
             <!-- Tabs -->
             <div class="max-w-6xl mx-auto mb-4">
                 <div class="flex border-b border-slate-800">
@@ -166,6 +168,8 @@ HTML_TEMPLATE = """
     <script>
         let currentTab = 'results';
         let logInterval = null;
+        let logCursor = null;      // last sequence number already rendered
+        const LOG_CLIENT_ID = Math.random().toString(36).slice(2);
 
         function switchTab(tab) {
             currentTab = tab;
@@ -181,27 +185,62 @@ HTML_TEMPLATE = """
             document.getElementById('tabLogs').classList.toggle('text-slate-500', tab !== 'logs');
             
             if (tab === 'logs') {
+                if (logInterval) clearInterval(logInterval);
                 fetchLogs();
                 logInterval = setInterval(fetchLogs, 1000);
             } else {
                 clearInterval(logInterval);
+                logInterval = null;
             }
         }
 
         function fetchLogs() {
-            fetch('/api/logs')
-                .then(res => res.json())
+            // Incremental polling: ask only for lines newer than logCursor.
+            // ?client is informational so a CDN/proxy never mixes responses.
+            const params = new URLSearchParams({ client: LOG_CLIENT_ID, limit: '200' });
+            if (logCursor !== null) params.set('since', logCursor);
+            fetch('/api/logs?' + params.toString(), { cache: 'no-store' })
+                .then(res => {
+                    if (res.status === 429) {
+                        // Back off instead of hammering a rate-limited endpoint.
+                        const retry = parseInt(res.headers.get('Retry-After') || '2', 10);
+                        pauseLogPolling((isNaN(retry) ? 2 : retry) * 1000);
+                        return null;
+                    }
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    return res.json();
+                })
                 .then(data => {
+                    if (!data) return;
                     const body = document.getElementById('logTerminalBody');
-                    body.innerHTML = data.logs.map(l => `<div>${escapeHtml(l)}</div>`).join('');
-                    body.scrollTop = body.scrollHeight;
+                    if (data.truncated) body.innerHTML = '';
+                    if (data.logs.length) {
+                        body.insertAdjacentHTML('afterbegin', data.logs.map(l => `<div>${escapeHtml(l)}</div>`).join(''));
+                        // keep the DOM small
+                        while (body.childElementCount > 500) body.removeChild(body.lastElementChild);
+                    }
+                    if (typeof data.latestSeq === 'number') logCursor = data.latestSeq;
                 })
                 .catch(err => console.error('Failed to fetch logs', err));
         }
 
+        function pauseLogPolling(delayMs) {
+            if (logInterval) clearInterval(logInterval);
+            setTimeout(() => {
+                if (currentTab === 'logs') {
+                    fetchLogs();
+                    logInterval = setInterval(fetchLogs, 1000);
+                }
+            }, Math.min(delayMs, 30000));
+        }
+
         function clearLogs() {
             fetch('/api/logs/clear', { method: 'POST' })
-                .then(() => fetchLogs())
+                .then(() => {
+                    logCursor = null;
+                    document.getElementById('logTerminalBody').innerHTML = '';
+                    return fetchLogs();
+                })
                 .catch(err => console.error('Failed to clear logs', err));
         }
 
@@ -307,7 +346,20 @@ HTML_TEMPLATE = """
 
         function escapeHtml(value) { return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c])); }
         
+        function renderWarnings(data) {
+            const banner = document.getElementById('warnBanner');
+            if (data && data.message) showError(data.message);
+            const list = (data.warnings || []).filter(Boolean);
+            const skipped = (data.platforms || []).filter(p => p.skipped).map(p => p.platform);
+            let html = list.map(w => `<div>⚠️ ${escapeHtml(w)}</div>`).join('');
+            if (skipped.length) html += `<div class="text-slate-500">Deaktiviert: ${escapeHtml(skipped.join(', '))}</div>`;
+            if (!html) { banner.classList.add('hidden'); banner.innerHTML = ''; return; }
+            banner.innerHTML = html;
+            banner.classList.remove('hidden');
+        }
+
         function updateDashboard(data) {
+            renderWarnings(data);
             document.getElementById('kpi-avg').innerText = data.avgPrice > 0 ? `${data.avgPrice.toFixed(2)} €` : '-- €';
             document.getElementById('kpi-new').innerText = data.indexPrice ? `${data.indexPrice.toFixed(2)} €` : '-- €';
             if(data.items.length > 0) document.getElementById('kpi-min').innerText = `${data.items[0].price.toFixed(2)} €`;
