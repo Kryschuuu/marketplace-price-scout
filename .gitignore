@@ -58,3 +58,6 @@ logs/
 
 # Marketplace Price Scout specific
 marketplace_price_scout/__pycache__/
+
+# Test tooling
+.pytest_cache/
