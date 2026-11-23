@@ -1,6 +1,6 @@
 # 🛍️ Marketplace Price Scout
 
-A powerful, production-ready price comparison scraper for German marketplaces (Kleinanzeigen, eBay, Hardwareschotte). Monitor product prices, identify deals, and track market trends in real-time.
+A powerful, production-ready price comparison scraper for German marketplaces (Kleinanzeigen, eBay, Vinted, mydealz, Amazon and Hardwareschotte). Monitor product prices, identify deals, and track market trends in real-time.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 ![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue)
@@ -11,6 +11,9 @@ A powerful, production-ready price comparison scraper for German marketplaces (K
 ✅ **Multi-Platform Scraping**
 - Kleinanzeigen (classifieds)
 - eBay Germany
+- Vinted Germany
+- mydealz Germany
+- Amazon Germany
 - Hardwareschotte (hardware reference prices)
 
 ✅ **Smart Price Analysis**
@@ -32,6 +35,10 @@ A powerful, production-ready price comparison scraper for German marketplaces (K
 - Blacklist keywords (exclude search results)
 - Responsive design (mobile & desktop)
 - Dark theme UI
+
+## Version
+
+Current release: **1.1.0** (see [CHANGELOG](CHANGELOG.md)).
 
 ## 📋 Requirements
 
@@ -270,7 +277,7 @@ This project is licensed under the **MIT License** - see [LICENSE](LICENSE) file
 - [ ] Database storage for price history
 - [ ] Price trend charts
 - [ ] Email alerts for price drops
-- [ ] More marketplaces (Vinted, Rebuy, etc.)
+- [ ] Additional marketplace adapters
 - [ ] Docker support
 - [ ] REST API authentication
 - [ ] Admin dashboard
