@@ -1,9 +1,8 @@
 import json
 import time
-import traceback
 import logging
-from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, jsonify, request, render_template_string
 from flask_cors import CORS
 from flask_limiter import Limiter
@@ -12,6 +11,8 @@ from bs4 import BeautifulSoup
 import cloudscraper
 import requests
 import os
+import math
+from urllib.parse import quote_plus, urljoin, urlparse
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -69,6 +70,10 @@ def validate_input(query, min_price, max_price, blacklist):
         raise ValueError("Search query cannot be empty")
     if len(query) > 200:
         raise ValueError("Search query too long (max 200 characters)")
+    if not math.isfinite(float(min_price)) or not math.isfinite(float(max_price)):
+        raise ValueError("Prices must be finite numbers")
+    if not isinstance(blacklist, list):
+        raise ValueError("Blacklist must be a list")
     if min_price < 0 or max_price < 0:
         raise ValueError("Prices cannot be negative")
     if min_price > max_price:
@@ -115,7 +120,7 @@ def is_valid_item(title, price, min_price, max_price, blacklist):
 def get_hardwareschotte_index(query, scraper):
     """Fetch reference price from Hardwareschotte."""
     try:
-        formatted_query = query.replace(" ", "+")
+        formatted_query = quote_plus(query)
         url = f"https://www.hardwareschotte.de/suche/?searchstring={formatted_query}"
         response = scraper.get(url, timeout=config['timeout'])
         
@@ -136,7 +141,7 @@ def scrape_kleinanzeigen(query, min_price, max_price, blacklist, scraper):
     """Scrape Kleinanzeigen marketplace."""
     items = []
     try:
-        formatted_query = query.replace(" ", "-")
+        formatted_query = quote_plus(query).replace("+", "-")
         url = f"https://www.kleinanzeigen.de/s-{formatted_query}/k0"
         response = scraper.get(url, timeout=config['timeout'])
         
@@ -154,7 +159,9 @@ def scrape_kleinanzeigen(query, min_price, max_price, blacklist, scraper):
                         price = clean_price(price_elem.get_text())
                         
                         if is_valid_item(title, price, min_price, max_price, blacklist):
-                            link = "https://www.kleinanzeigen.de" + title_elem.get('href', '')
+                            link = urljoin("https://www.kleinanzeigen.de", title_elem.get('href', ''))
+                            if urlparse(link).netloc != "www.kleinanzeigen.de":
+                                continue
                             items.append({
                                 "platform": "Kleinanzeigen",
                                 "title": title[:100],
@@ -175,7 +182,7 @@ def scrape_ebay(query, min_price, max_price, blacklist, scraper):
     """Scrape eBay marketplace."""
     items = []
     try:
-        formatted_query = query.replace(" ", "+")
+        formatted_query = quote_plus(query)
         url = f"https://www.ebay.de/sch/i.html?_nkw={formatted_query}&_sacat=0&LH_ItemCondition=3000|1000"
         response = scraper.get(url, timeout=config['timeout'])
         
@@ -194,7 +201,9 @@ def scrape_ebay(query, min_price, max_price, blacklist, scraper):
                         price = clean_price(price_elem.get_text())
                         
                         if "Shop-Artikel" not in title and is_valid_item(title, price, min_price, max_price, blacklist):
-                            url = link_elem.get('href', '#').split("?")[0]
+                            url = urljoin("https://www.ebay.de", link_elem.get('href', '#').split("?")[0])
+                            if urlparse(url).scheme != "https" or urlparse(url).hostname not in ("www.ebay.de", "ebay.de"):
+                                continue
                             items.append({
                                 "platform": "eBay",
                                 "title": title[:100],
@@ -210,6 +219,46 @@ def scrape_ebay(query, min_price, max_price, blacklist, scraper):
         logger.error(f"eBay scraping error: {e}")
     
     return items
+
+def _scrape_cards(query, min_price, max_price, blacklist, scraper, platform, url, selectors, base):
+    """Parse a site's public search-result cards; tolerate markup changes."""
+    results = []
+    try:
+        response = scraper.get(url, timeout=config['timeout'])
+        if response.status_code != 200:
+            logger.info("%s returned HTTP %s", platform, response.status_code)
+            return results
+        soup = BeautifulSoup(response.text, 'html.parser')
+        for card in soup.select(selectors['card'])[:config['max_results']]:
+            title_el = card.select_one(selectors['title'])
+            price_el = card.select_one(selectors['price'])
+            link_el = card.select_one(selectors['link'])
+            if not (title_el and price_el and link_el):
+                continue
+            title = title_el.get_text(" ", strip=True)
+            price = clean_price(price_el.get_text(" ", strip=True))
+            link = urljoin(base, link_el.get('href', ''))
+            if urlparse(link).scheme != 'https' or urlparse(link).hostname not in (urlparse(base).hostname,):
+                continue
+            if is_valid_item(title, price, min_price, max_price, blacklist):
+                results.append({"platform": platform, "title": title[:100], "price": price, "url": link})
+    except requests.Timeout:
+        logger.warning("%s timeout for query: %s", platform, query)
+    except Exception:
+        logger.exception("%s scraping error", platform)
+    return results
+
+def scrape_vinted(query, min_price, max_price, blacklist, scraper):
+    return _scrape_cards(query, min_price, max_price, blacklist, scraper, "Vinted", "https://www.vinted.de/catalog?search_text=" + quote_plus(query),
+        {"card":".new-item-box__container, .feed-grid__item", "title":"a[href]", "price":".price, .new-price" ,"link":"a[href]"}, "https://www.vinted.de")
+
+def scrape_mydealz(query, min_price, max_price, blacklist, scraper):
+    return _scrape_cards(query, min_price, max_price, blacklist, scraper, "mydealz", "https://www.mydealz.de/search?q=" + quote_plus(query),
+        {"card":"article, .thread", "title":"a.thread-link, h2 a", "price":".thread-price, .price", "link":"a.thread-link, h2 a"}, "https://www.mydealz.de")
+
+def scrape_amazon(query, min_price, max_price, blacklist, scraper):
+    return _scrape_cards(query, min_price, max_price, blacklist, scraper, "Amazon", "https://www.amazon.de/s?k=" + quote_plus(query),
+        {"card":"div[data-component-type='s-search-result']", "title":"h2 a span", "price":".a-price .a-offscreen", "link":"h2 a"}, "https://www.amazon.de")
 
 def calculate_trimmed_mean(items, trim_percent=None):
     """Calculate trimmed mean price (removes outliers)."""
@@ -230,24 +279,18 @@ def calculate_trimmed_mean(items, trim_percent=None):
     return sum(trimmed) / len(trimmed) if trimmed else 0.0
 
 def scrape_all_platforms(query, min_price, max_price, blacklist):
-    """Scrape all platforms in parallel for better performance."""
-    scraper = get_scraper()
+    """Scrape all marketplace sources concurrently using isolated sessions."""
+    scrapers = [get_scraper() for _ in range(5)]
+    tasks = [(scrape_kleinanzeigen, "Kleinanzeigen"), (scrape_ebay, "eBay"),
+             (scrape_vinted, "Vinted"), (scrape_mydealz, "mydealz"), (scrape_amazon, "Amazon")]
     items = []
-    
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {
-            executor.submit(scrape_kleinanzeigen, query, min_price, max_price, blacklist, scraper): "Kleinanzeigen",
-            executor.submit(scrape_ebay, query, min_price, max_price, blacklist, scraper): "eBay",
-        }
-        
-        for future in as_completed(futures):
+    with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+        futures = [executor.submit(fn, query, min_price, max_price, blacklist, scrapers[i]) for i, (fn, _) in enumerate(tasks)]
+        for future, (_, name) in zip(futures, tasks):
             try:
-                platform_items = future.result(timeout=config['timeout'])
-                items.extend(platform_items)
-                time.sleep(config['rate_limit'])  # Rate limiting
-            except Exception as e:
-                logger.error(f"Error in {futures[future]}: {e}")
-    
+                items.extend(future.result())
+            except Exception:
+                logger.exception("Error scraping %s", name)
     return items
 
 # ==========================================
@@ -271,7 +314,7 @@ HTML_TEMPLATE = """
             <div class="bg-emerald-500/20 text-emerald-400 p-2 rounded-lg border border-emerald-500/30"><i class="fa-solid fa-magnifying-glass-dollar fa-lg"></i></div>
             <span class="text-xl font-bold text-white tracking-tight">Marketplace <span class="text-emerald-500">Price Scout</span></span>
         </div>
-        <span class="text-xs text-slate-500">v1.0.0</span>
+        <span class="text-xs text-slate-500">v1.1.0</span>
     </nav>
 
     <div class="flex flex-1 overflow-hidden flex-col md:flex-row">
@@ -454,6 +497,7 @@ HTML_TEMPLATE = """
             errorText.innerText = message;
         }
 
+        function escapeHtml(value) { return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
         function updateDashboard(data) {
             document.getElementById('kpi-avg').innerText = data.avgPrice > 0 ? `${data.avgPrice.toFixed(2)} €` : '-- €';
             document.getElementById('kpi-new').innerText = data.indexPrice ? `${data.indexPrice.toFixed(2)} €` : '-- €';
@@ -469,12 +513,12 @@ HTML_TEMPLATE = """
                 let diffColor = item.diff <= 0 ? 'text-emerald-400' : 'text-rose-400';
                 return `
                     <tr class="hover:bg-slate-800/80 transition">
-                        <td class="px-4 py-3"><span class="px-2 py-1 rounded text-xs bg-slate-800 text-slate-300">${item.platform}</span></td>
-                        <td class="px-4 py-3 font-medium text-white max-w-[150px] md:max-w-md truncate" title="${item.title}">${item.title}</td>
+                        <td class="px-4 py-3"><span class="px-2 py-1 rounded text-xs bg-slate-800 text-slate-300">${escapeHtml(item.platform)}</span></td>
+                        <td class="px-4 py-3 font-medium text-white max-w-[150px] md:max-w-md truncate" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</td>
                         <td class="px-4 py-3 font-bold text-white text-right">${item.price.toFixed(2)} €</td>
                         <td class="px-4 py-3 ${diffColor} text-right font-semibold">${item.diff > 0 ? '+' : ''}${item.diff.toFixed(1)}%</td>
                         <td class="px-4 py-3 text-center">
-                            <a href="${item.url}" target="_blank" rel="noopener noreferrer" class="p-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 inline-block"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>
+                            <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" class="p-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 inline-block"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>
                         </td>
                     </tr>
                 `;
@@ -499,13 +543,17 @@ def index():
 def api_scrape():
     """API endpoint for scraping marketplaces."""
     try:
-        req_data = request.json or {}
+        req_data = request.get_json(silent=True) or {}
+        if not isinstance(req_data, dict):
+            raise ValueError("Request body must be a JSON object")
         
         # Extract and validate input
         query = req_data.get('query', '')
         min_price = float(req_data.get('minPrice', 0))
         max_price = float(req_data.get('maxPrice', 10000))
         blacklist = req_data.get('blacklist', [])
+        if not isinstance(blacklist, (list, str)):
+            raise ValueError("Blacklist must be a list or string")
         
         if isinstance(blacklist, str):
             blacklist = [x.strip() for x in blacklist.split(',')]
@@ -558,12 +606,12 @@ def api_scrape():
         return jsonify({"error": f"Invalid input: {str(e)}"}), 400
     except Exception as e:
         logger.error(f"Backend error: {e}", exc_info=True)
-        return jsonify({"error": f"Backend error: {str(e)}"}), 500
+        return jsonify({"error": "Scraping failed. Please try again later."}), 500
 
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint."""
-    return jsonify({"status": "healthy", "timestamp": datetime.now().isoformat()})
+    return jsonify({"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()})
 
 if __name__ == '__main__':
     host = os.getenv('FLASK_HOST', '0.0.0.0')
